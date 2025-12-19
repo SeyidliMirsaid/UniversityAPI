@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Security.Cryptography;
+using System.Text;
 
 namespace Education.Business.Services.Impl
 {
@@ -18,128 +19,205 @@ namespace Education.Business.Services.Impl
 
         public async Task<LoginResponse> LoginAsync(LoginRequest request)
         {
-            // 1. User tap
-            var user = await _unitOfWork.MyUsers.FirstOrDefaultAsync(u => u.Email == request.Email) ?? 
-                throw new Exception("Email or password is incorrect");
+            // 1. İstifadəçini email ilə tap
+            var user = await _unitOfWork.MyUsers
+                .FirstOrDefaultAsync(u => u.Email == request.Email && !u.IsDeleted) 
+                ?? throw new UnauthorizedAccessException("Email və ya şifrə yanlışdır");
 
-            // 2. Password yoxla
-            if (!VerifyPasswordHash(request.Password, user.PasswordHash, user.PasswordSalt))
-                throw new Exception("Email or password is incorrect");
+            // 2. Şifrəni yoxla
+            if (!VerifyPassword(request.Password, user.PasswordHash, user.PasswordSalt))
+                throw new UnauthorizedAccessException("Email və ya şifrə yanlışdır");
 
-            // 3. Email confirmed?
-            if (!user.EmailConfirmed)
-                throw new Exception("Email not confirmed. Please confirm your email.");
+            // 3. İstifadəçi aktiv deyilsə
+            if (!user.IsActive)
+                throw new UnauthorizedAccessException("İstifadəçi hesabı aktiv deyil");
 
-            // 4. User rollarını tap
-            var roles = await GetUserRolesAsync(user.Id);
+            // 4. Rolları al (MyUserRoles və MyRole ilə)
+            var userRoles = await _unitOfWork.MyUserRoles
+                .FindAsync(ur => ur.MyUserId == user.Id && !ur.IsDeleted);
 
-            // 5. JWT token yarat (ROLLAR ilə)
-            var accessToken = GenerateJwtToken(user, roles);
+            if (!userRoles.Any())
+                throw new UnauthorizedAccessException("İstifadəçinin rolu yoxdur");
+
+            var roleIds = userRoles.Select(ur => ur.MyRoleId).Distinct().ToList();
+            var roles = await _unitOfWork.MyRoles
+                .FindAsync(r => roleIds.Contains(r.Id) && !r.IsDeleted);
+
+            var roleNames = roles.Select(r => r.Name).Distinct().ToList();
+
+            // 5. JWT token yarat
+            var accessToken = GenerateJwtToken(user, roleNames);
+
+            // 6. Refresh token yarat
             var refreshToken = GenerateRefreshToken();
 
-            // 6. Update login info
+            // 7. Refresh token'i user'a təyin et
+            user.RefreshToken = refreshToken;
+            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(
+                Convert.ToDouble(_configuration["Jwt:RefreshTokenExpiryDays"] ?? "7"));
             user.LastLoginDate = DateTime.UtcNow;
+
             _unitOfWork.MyUsers.Update(user);
 
-            // 7. Save refresh token
+            // 8. Token'i database'də saxla
             var tokenEntity = new Token
             {
                 MyUserId = user.Id,
                 TokenValue = refreshToken,
                 JwtId = Guid.NewGuid().ToString(),
-                IsUsed = false,
-                IsRevoked = false,
-                ExpiryDate = DateTime.UtcNow.AddDays(Convert.ToInt32(_configuration["Jwt:RefreshTokenExpiryDays"] ?? "7")),
+                AddedDate = DateTime.UtcNow,
+                ExpiryDate = user.RefreshTokenExpiryTime.Value,
                 TokenType = "Refresh"
             };
 
             await _unitOfWork.Tokens.AddAsync(tokenEntity);
+
+            // 9. Bütün dəyişiklikləri save et
             await _unitOfWork.SaveChangesAsync();
 
-            // 8. Return response
+            // 10. Response yarat
             return new LoginResponse
             {
                 UserId = user.Id,
-                FullName = $"{user.FirstName} {user.LastName}",
+                FullName = user.FullName,
                 Email = user.Email,
-                Roles = roles,
+                Roles = roleNames,
                 AccessToken = accessToken,
                 RefreshToken = refreshToken,
-                AccessTokenExpiry = DateTime.UtcNow.AddHours(2)
+                AccessTokenExpiry = DateTime.UtcNow.AddMinutes(
+                    Convert.ToDouble(_configuration["Jwt:AccessTokenExpiryMinutes"] ?? "60"))
             };
+        }
+
+        public async Task LogoutAsync(int userId)
+        {
+            // 1. İstifadəçini tap
+            var user = await _unitOfWork.MyUsers
+                .FirstOrDefaultAsync(u => u.Id == userId && !u.IsDeleted) ??
+                throw new ArgumentException("İstifadəçi tapılmadı");
+
+            // 2. İstifadəçinin bütün aktiv refresh token'lərini tap
+            var activeTokens = await _unitOfWork.Tokens
+                .FindAsync(t =>
+                    t.MyUserId == userId &&
+                    t.TokenType == "Refresh" &&
+                    !t.IsUsed &&
+                    !t.IsRevoked &&
+                    t.ExpiryDate > DateTime.UtcNow &&
+                    !t.IsDeleted);
+
+            // 3. Bütün aktiv token'ləri revoke et
+            foreach (var token in activeTokens)
+            {
+                token.IsRevoked = true;
+                token.IsUsed = true;
+                _unitOfWork.Tokens.Update(token);
+            }
+
+            // 4. İstifadəçinin refresh token'ini null et
+            user.RefreshToken = null;
+            user.RefreshTokenExpiryTime = null;
+            _unitOfWork.MyUsers.Update(user);
+
+            // 5. Dəyişiklikləri save et
+            await _unitOfWork.SaveChangesAsync();
         }
 
         public async Task<TokenResponse> RefreshTokenAsync(string refreshToken)
         {
             if (string.IsNullOrEmpty(refreshToken))
-                throw new ArgumentException("Refresh token is required");
+                throw new ArgumentException("Refresh token tələb olunur");
 
-            // 1. Refresh token-i bazadan tap
-            var storedToken = await _unitOfWork.Tokens
-                .FirstOrDefaultAsync(t => t.TokenValue == refreshToken && t.TokenType == "Refresh") ?? throw new SecurityTokenException("Invalid refresh token");
+            // 1. Refresh token'i database'də tap
+            var tokenEntity = await _unitOfWork.Tokens
+                .FirstOrDefaultAsync(t => t.TokenValue == refreshToken &&
+                    t.TokenType == "Refresh" && !t.IsDeleted)
+                ?? throw new UnauthorizedAccessException("Etibarsız refresh token");
 
-            // 2. Token-in valid olub-olmadığını yoxla
-            if (storedToken.IsUsed || storedToken.IsRevoked)
-                throw new SecurityTokenException("Token has been used or revoked");
+            // 2. Token'in valid olub-olmadığını yoxla
+            if (tokenEntity.IsUsed || tokenEntity.IsRevoked || tokenEntity.ExpiryDate < DateTime.UtcNow)
+                throw new UnauthorizedAccessException("Token istifadə edilib və ya müddəti bitib");
 
-            if (storedToken.ExpiryDate < DateTime.UtcNow)
-                throw new SecurityTokenException("Token has expired");
+            // 3. İstifadəçini tap
+            var user = await _unitOfWork.MyUsers
+                .FirstOrDefaultAsync(u => u.Id == tokenEntity.MyUserId && !u.IsDeleted)
+            ??    throw new UnauthorizedAccessException("İstifadəçi tapılmadı");
 
-            // 3. Əlaqəli user-i tap
-            var user = await _unitOfWork.MyUsers.GetByIdAsync(storedToken.MyUserId);
-            if (user == null || user.IsDeleted)
-                throw new SecurityTokenException("User not found or deleted");
+            // 4. User'ın refresh token'i yoxla (security üçün)
+            if (user.RefreshToken != refreshToken || user.RefreshTokenExpiryTime < DateTime.UtcNow)
+                throw new UnauthorizedAccessException("Etibarsız refresh token");
 
-            // 4. Köhnə token-i revoke et
-            storedToken.IsUsed = true;
-            storedToken.IsRevoked = true;
-            storedToken.UpdateDate = DateTime.UtcNow;
-            _unitOfWork.Tokens.Update(storedToken);
+            // 5. Köhnə token'i etibarsız et
+            tokenEntity.IsUsed = true;
+            tokenEntity.IsRevoked = true;
+            _unitOfWork.Tokens.Update(tokenEntity);
 
-            // 5. User-in rollarını gətir
-            var roles = await GetUserRolesAsync(user.Id);
+            // 6. User'ın rollarını al
+            var userRoles = await _unitOfWork.MyUserRoles
+                .FindAsync(ur => ur.MyUserId == user.Id && !ur.IsDeleted);
 
-            // 6. Yeni access token yarat
-            var newAccessToken = GenerateJwtToken(user, roles);
+            var roleIds = userRoles.Select(ur => ur.MyRoleId).Distinct().ToList();
+            var roles = await _unitOfWork.MyRoles
+                .FindAsync(r => roleIds.Contains(r.Id) && !r.IsDeleted);
 
-            // 7. Yeni refresh token yarat
+            var roleNames = roles.Select(r => r.Name).Distinct().ToList();
+
+            // 7. Yeni access token yarat
+            var newAccessToken = GenerateJwtToken(user, roleNames);
+
+            // 8. Yeni refresh token yarat
             var newRefreshToken = GenerateRefreshToken();
 
-            // 8. Yeni refresh token-i bazaya əlavə et
+            // 9. User'ı yeni refresh token ilə update et
+            user.RefreshToken = newRefreshToken;
+            user.RefreshTokenExpiryTime = DateTime.UtcNow.AddDays(
+                Convert.ToDouble(_configuration["Jwt:RefreshTokenExpiryDays"] ?? "7"));
+
+            _unitOfWork.MyUsers.Update(user);
+
+            // 10. Yeni token'i database'də saxla
             var newTokenEntity = new Token
             {
                 MyUserId = user.Id,
                 TokenValue = newRefreshToken,
                 JwtId = Guid.NewGuid().ToString(),
-                IsUsed = false,
-                IsRevoked = false,
                 AddedDate = DateTime.UtcNow,
-                ExpiryDate = DateTime.UtcNow.AddDays(Convert.ToInt32(_configuration["Jwt:RefreshTokenExpiryDays"] ?? "7")),
+                ExpiryDate = user.RefreshTokenExpiryTime.Value,
                 TokenType = "Refresh"
             };
 
             await _unitOfWork.Tokens.AddAsync(newTokenEntity);
+
+            // 11. Bütün dəyişiklikləri save et
             await _unitOfWork.SaveChangesAsync();
 
-            // 9. Cavab qaytar
+            // 12. Yeni token'ləri qaytar
             return new TokenResponse
             {
                 AccessToken = newAccessToken,
                 RefreshToken = newRefreshToken,
-                AccessTokenExpiry = DateTime.UtcNow.AddHours(2)
+                AccessTokenExpiry = DateTime.UtcNow.AddMinutes(
+                    Convert.ToDouble(_configuration["Jwt:AccessTokenExpiryMinutes"] ?? "60"))
             };
         }
 
         public async Task<RegisterResponse> RegisterAsync(RegisterRequest request)
         {
-            // 1. Validation
-            await ValidateRegistrationRequest(request);
+            // 1. Email artıq mövcuddurmu yoxla
+            var existingUser = await _unitOfWork.MyUsers
+                .FirstOrDefaultAsync(u => u.Email == request.Email && !u.IsDeleted) ??
+            throw new ArgumentException("Bu email artıq qeydiyyatdan keçib");
+                
 
-            // 2. Password hash yarat
-            var (passwordHash, passwordSalt) = CreatePasswordHash(request.Password);
+            // 2. Role-u yoxla (Student və ya Teacher olmalıdır)
+            if (request.UserType != "Student" && request.UserType != "Teacher")
+                throw new ArgumentException("İstifadəçi tipi 'Student' və ya 'Teacher' olmalıdır");
 
-            // 3. MyUser entity yarat
-            var user = new MyUser
+            // 3. Şifrəni hash et
+            var (passwordHash, passwordSalt) = HashPassword(request.Password);
+
+            // 4. Yeni MyUser yarat
+            var newUser = new MyUser
             {
                 FirstName = request.FirstName,
                 LastName = request.LastName,
@@ -147,316 +225,209 @@ namespace Education.Business.Services.Impl
                 PhoneNumber = request.PhoneNumber,
                 PasswordHash = passwordHash,
                 PasswordSalt = passwordSalt,
-                EmailConfirmed = false, // İlk başda false, email confirmation lazım
-                CreatedAt = DateTime.UtcNow
+                EmailConfirmed = false, // İlkin olaraq təsdiqlənməyib
+                PhoneConfirmed = false
             };
 
-            // 4. Role tap
-            MyRole role = await GetRoleByNameAsync(request.UserType) ?? throw new Exception($"Role '{request.UserType}' not found");
+            await _unitOfWork.MyUsers.AddAsync(newUser);
+            await _unitOfWork.SaveChangesAsync(); // User ID almaq üçün
 
-            // 5. User-i save et
-            await _unitOfWork.MyUsers.AddAsync(user);
-            await _unitOfWork.SaveChangesAsync(); // ID almaq üçün
+            // 5. Role-u tap və ya yarat
+            var role = await _unitOfWork.MyRoles.FirstOrDefaultAsync(r => r.Name == request.UserType && !r.IsDeleted);
 
-            // 6. UserRole əlavə et
+            if (role == null)
+            {
+                // Role yoxdursa yarat
+                role = new MyRole
+                {
+                    Name = request.UserType,
+                    Description = $"{request.UserType} rolu"
+                };
+                await _unitOfWork.MyRoles.AddAsync(role);
+                await _unitOfWork.SaveChangesAsync();
+            }
+
+            // 6. User'a role təyin et
             var userRole = new MyUserRole
             {
-                MyUserId = user.Id,
+                MyUserId = newUser.Id,
                 MyRoleId = role.Id
             };
-
             await _unitOfWork.MyUserRoles.AddAsync(userRole);
 
-            // 7. Student/Teacher profile yarat (əgər lazımdırsa)
+            // 7. Student və ya Teacher profili yarat
             if (request.UserType == "Student")
             {
-                await CreateStudentProfileAsync(user.Id, request);
+                if (string.IsNullOrEmpty(request.StudentNumber))
+                    throw new ArgumentException("Student nömrəsi tələb olunur");
+
+                // Student nömrəsi unikallığını yoxla
+                var existingStudent = await _unitOfWork.Students
+                    .FirstOrDefaultAsync(s => s.StudentNumber == request.StudentNumber && !s.IsDeleted)
+                  ??  throw new ArgumentException("Bu student nömrəsi artıq mövcuddur");
+
+                var student = new Student
+                {
+                    MyUserId = newUser.Id,
+                    StudentNumber = request.StudentNumber,
+                    Major = request.Major,
+                    EnrollmentDate = DateTime.UtcNow
+                };
+                await _unitOfWork.Students.AddAsync(student);
             }
             else if (request.UserType == "Teacher")
             {
-                await CreateTeacherProfileAsync(user.Id, request);
+                if (string.IsNullOrEmpty(request.TeacherCode))
+                    throw new ArgumentException("Teacher kodu tələb olunur");
+
+                // Teacher kodunun unikallığını yoxla
+                var existingTeacher = await _unitOfWork.Teachers
+                    .FirstOrDefaultAsync(t => t.TeacherCode == request.TeacherCode && !t.IsDeleted)
+                    ?? throw new ArgumentException("Bu teacher kodu artıq mövcuddur");
+
+                var teacher = new Teacher
+                {
+                    MyUserId = newUser.Id,
+                    TeacherCode = request.TeacherCode,
+                    Department = request.Department ?? "Ümumi",
+                    HireDate = DateTime.UtcNow
+                };
+                await _unitOfWork.Teachers.AddAsync(teacher);
             }
 
-            // 8. Save changes
+            // 8. Bütün dəyişiklikləri save et
             await _unitOfWork.SaveChangesAsync();
 
-            // 9. Response qaytar
+            // 9. Response yarat
             return new RegisterResponse
             {
-                UserId = user.Id,
-                FirstName = user.FirstName,
-                LastName = user.LastName,
-                Email = user.Email,
-                PhoneNumber = user.PhoneNumber,
+                UserId = newUser.Id,
+                FirstName = newUser.FirstName,
+                LastName = newUser.LastName,
+                Email = newUser.Email,
+                PhoneNumber = newUser.PhoneNumber,
                 UserType = request.UserType,
-                CreatedAt = (DateTime)user.CreatedAt,
-                StudentNumber = request.StudentNumber,
-                Major = request.Major,
-                TeacherCode = request.TeacherCode,
-                Department = request.Department
+                CreatedAt = DateTime.UtcNow,
+                StudentNumber = request.UserType == "Student" ? request.StudentNumber : null,
+                Major = request.UserType == "Student" ? request.Major : null,
+                TeacherCode = request.UserType == "Teacher" ? request.TeacherCode : null,
+                Department = request.UserType == "Teacher" ? request.Department : null
             };
         }
 
         public async Task RevokeTokenAsync(string refreshToken)
         {
             if (string.IsNullOrEmpty(refreshToken))
-                throw new ArgumentException("Refresh token is required");
+                throw new ArgumentException("Refresh token tələb olunur");
 
-            // 1. Token-i tap
-            var token = await _unitOfWork.Tokens
-                .FirstOrDefaultAsync(t => t.TokenValue == refreshToken && t.TokenType == "Refresh") ?? throw new SecurityTokenException("Token not found");
-
-            // 2. Token-i revoke et
-            token.IsRevoked = true;
-            token.UpdateDate = DateTime.UtcNow;
-            _unitOfWork.Tokens.Update(token);
-
-            // 3. User-in bütün active refresh token-lərini revoke et (optional - security üçün)
-            var userActiveTokens = await _unitOfWork.Tokens
-                .FindAsync(t =>
-                    t.MyUserId == token.MyUserId &&
+            // 1. Token'i tap
+            var tokenEntity = await _unitOfWork.Tokens
+                .FirstOrDefaultAsync(t =>
+                    t.TokenValue == refreshToken &&
                     t.TokenType == "Refresh" &&
-                    !t.IsUsed &&
-                    !t.IsRevoked &&
-                    t.ExpiryDate > DateTime.UtcNow);
+                    !t.IsDeleted) ??
+                throw new ArgumentException("Token tapılmadı");
 
-            foreach (var activeToken in userActiveTokens)
+            // 2. Token'i revoke et
+            tokenEntity.IsRevoked = true;
+            tokenEntity.IsUsed = true;
+            _unitOfWork.Tokens.Update(tokenEntity);
+
+            // 3. Əgər bu token istifadəçinin cari token'idirsə, null et
+            var user = await _unitOfWork.MyUsers
+                .FirstOrDefaultAsync(u => u.Id == tokenEntity.MyUserId && !u.IsDeleted);
+
+            if (user != null && user.RefreshToken == refreshToken)
             {
-                activeToken.IsRevoked = true;
-                activeToken.UpdateDate = DateTime.UtcNow;
-                _unitOfWork.Tokens.Update(activeToken);
+                user.RefreshToken = null;
+                user.RefreshTokenExpiryTime = null;
+                _unitOfWork.MyUsers.Update(user);
             }
 
+            // 4. Dəyişiklikləri save et
             await _unitOfWork.SaveChangesAsync();
         }
 
-        public async Task LogoutAsync(int userId)
-        {
-            // 1. User-i tap
-            var user = await _unitOfWork.MyUsers.GetByIdAsync(userId);
-            if (user == null || user.IsDeleted)
-                throw new ArgumentException("User not found");
-
-            // 2. User-in bütün active refresh token-lərini revoke et
-            var activeTokens = await _unitOfWork.Tokens
-                .FindAsync(t =>
-                    t.MyUserId == userId &&
-                    t.TokenType == "Refresh" &&
-                    !t.IsUsed &&
-                    !t.IsRevoked &&
-                    t.ExpiryDate > DateTime.UtcNow);
-
-            foreach (var token in activeTokens)
-            {
-                token.IsRevoked = true;
-                token.UpdateDate = DateTime.UtcNow;
-                _unitOfWork.Tokens.Update(token);
-            }
-
-            // 3. User-in refresh token field-lərini null et
-            user.RefreshToken = null;
-            user.RefreshTokenExpiryTime = null;
-            user.UpdateDate = DateTime.UtcNow;
-            _unitOfWork.MyUsers.Update(user);
-
-            await _unitOfWork.SaveChangesAsync();
-        }
-
-        // ========== HELPER METHODS ==========
-
-        private (byte[] passwordHash, byte[] passwordSalt) CreatePasswordHash(string password)
-        {
-            using var hmac = new HMACSHA512();
-            var passwordSalt = hmac.Key;
-            var passwordHash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password));
-            return (passwordHash, passwordSalt);
-        }
-
-        private bool VerifyPasswordHash(string password, byte[] storedHash, byte[] storedSalt)
-        {
-            if (storedHash.Length != 32 || storedSalt.Length != 64)
-                return false;
-
-            using var hmac = new HMACSHA512(storedSalt);
-            var computedHash = hmac.ComputeHash(System.Text.Encoding.UTF8.GetBytes(password));
-            return computedHash.SequenceEqual(storedHash);
-        }
-
+        // PRIVATE METHODS
         private string GenerateJwtToken(MyUser user, List<string> roles)
         {
-            // 1. Claims yarat
             var claims = new List<Claim>
             {
+                new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+                new(JwtRegisteredClaimNames.Email, user.Email),
+                new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
                 new(ClaimTypes.NameIdentifier, user.Id.ToString()),
-                new(ClaimTypes.Email, user.Email),
-                new(ClaimTypes.GivenName, user.FirstName),
-                new(ClaimTypes.Surname, user.LastName),
-                new("fullName", $"{user.FirstName} {user.LastName}")
+                new("fullName", user.FullName)
             };
 
-            // 2. Rolları əlavə et
             foreach (var role in roles)
             {
                 claims.Add(new Claim(ClaimTypes.Role, role));
             }
 
-            // 3. Secret key
-            var key = new SymmetricSecurityKey(
-                System.Text.Encoding.UTF8.GetBytes(_configuration["Jwt:Key"] ?? "default_secret_key_here"));
+            var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
+                _configuration["Jwt:SecretKey"] ?? throw new InvalidOperationException("JWT secret key not found")));
 
-            // 4. Credentials
             var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
-            // 5. Token descriptor
-            var tokenDescriptor = new SecurityTokenDescriptor
-            {
-                Subject = new ClaimsIdentity(claims),
-                Expires = DateTime.UtcNow.AddHours(2),
-                SigningCredentials = creds,
-                Issuer = _configuration["Jwt:Issuer"],
-                Audience = _configuration["Jwt:Audience"]
-            };
+            var token = new JwtSecurityToken(
+                issuer: _configuration["Jwt:Issuer"],
+                audience: _configuration["Jwt:Audience"],
+                claims: claims,
+                expires: DateTime.UtcNow.AddMinutes(Convert.ToDouble(_configuration["Jwt:AccessTokenExpiryMinutes"])),
+                signingCredentials: creds);
 
-            // 6. Token yarat
-            var tokenHandler = new JwtSecurityTokenHandler();
-            var token = tokenHandler.CreateToken(tokenDescriptor);
-            return tokenHandler.WriteToken(token);
+            return new JwtSecurityTokenHandler().WriteToken(token);
         }
 
         private string GenerateRefreshToken()
         {
-            var randomNumber = new byte[32];
+            var randomNumber = new byte[64];
             using var rng = RandomNumberGenerator.Create();
             rng.GetBytes(randomNumber);
             return Convert.ToBase64String(randomNumber);
         }
 
-        private async Task<List<string>> GetUserRolesAsync(int userId)
+        private (byte[] hash, byte[] salt) HashPassword(string password)
         {
-            var userRoles = await _unitOfWork.MyUserRoles.FindAsync(ur => ur.MyUserId == userId);
-
-            var roleIds = userRoles.Select(ur => ur.MyRoleId).ToList();
-
-            var roles = await _unitOfWork.MyRoles.FindAsync(r => roleIds.Contains(r.Id));
-
-            return roles.Select(r => r.Name).ToList();
+            using var hmac = new HMACSHA512();
+            var salt = hmac.Key;
+            var hash = hmac.ComputeHash(Encoding.UTF8.GetBytes(password));
+            return (hash, salt);
         }
 
-        private async Task<bool> IsEmailUniqueAsync(string email)
+        private bool VerifyPassword(string password, byte[] storedHash, byte[] storedSalt)
         {
-            return !await _unitOfWork.MyUsers.ExistsAsync(u => u.Email == email);
+            using var hmac = new HMACSHA512(storedSalt);
+            var computedHash = hmac.ComputeHash(Encoding.UTF8.GetBytes(password));
+            return computedHash.SequenceEqual(storedHash);
         }
 
-        private async Task<bool> IsStudentNumberUniqueAsync(string studentNumber)
+        /*
+        private int? GetUserIdFromToken(string token)
         {
-            return !await _unitOfWork.Students.ExistsAsync(s => s.StudentNumber == studentNumber);
-        }
-
-        private async Task<bool> IsTeacherCodeUniqueAsync(string teacherCode)
-        {
-            return !await _unitOfWork.Teachers.ExistsAsync(t => t.TeacherCode == teacherCode);
-        }
-
-        private async Task<MyRole?> GetRoleByNameAsync(string roleName)
-        {
-            return await _unitOfWork.MyRoles.FirstOrDefaultAsync(r => r.Name == roleName);
-        }
-
-        private async Task ValidateRegistrationRequest(RegisterRequest request)
-        {
-            // 1. Tələb olunan field-lar
-            if (string.IsNullOrEmpty(request.FirstName))
-                throw new Exception("First name is required");
-
-            if (string.IsNullOrEmpty(request.Email))
-                throw new Exception("Email is required");
-
-            if (string.IsNullOrEmpty(request.Password))
-                throw new Exception("Password is required");
-
-            if (string.IsNullOrEmpty(request.UserType))
-                throw new Exception("User type is required");
-
-            // 2. Email format validasiya
-            if (!IsValidEmail(request.Email))
-                throw new Exception("Invalid email format");
-
-            // 3. Email unikallıq
-            if (!await IsEmailUniqueAsync(request.Email))
-                throw new Exception("Email already registered");
-
-            // 4. Password gücü
-            if (request.Password.Length < 6)
-                throw new Exception("Password must be at least 6 characters");
-
-            // 5. User type validasiya
-            if (request.UserType != "Student" && request.UserType != "Teacher")
-                throw new Exception("User type must be 'Student' or 'Teacher'");
-
-            // 6. Student-xüsusi validasiya
-            if (request.UserType == "Student")
-            {
-                if (string.IsNullOrEmpty(request.StudentNumber))
-                    throw new Exception("Student number is required for students");
-
-                if (!await IsStudentNumberUniqueAsync(request.StudentNumber))
-                    throw new Exception("Student number already exists");
-            }
-
-            // 7. Teacher-xüsusi validasiya
-            if (request.UserType == "Teacher")
-            {
-                if (string.IsNullOrEmpty(request.TeacherCode))
-                    throw new Exception("Teacher code is required for teachers");
-
-                if (!await IsTeacherCodeUniqueAsync(request.TeacherCode))
-                    throw new Exception("Teacher code already exists");
-
-                if (string.IsNullOrEmpty(request.Department))
-                    throw new Exception("Department is required for teachers");
-            }
-        }
-
-        private bool IsValidEmail(string email)
-        {
-            if (string.IsNullOrWhiteSpace(email))
-                return false;
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.UTF8.GetBytes(_configuration["Jwt:SecretKey"] ?? "");
 
             try
             {
-                var addr = new System.Net.Mail.MailAddress(email);
-                return addr.Address == email;
+                tokenHandler.ValidateToken(token, new TokenValidationParameters
+                {
+                    ValidateIssuerSigningKey = true,
+                    IssuerSigningKey = new SymmetricSecurityKey(key),
+                    ValidateIssuer = false,
+                    ValidateAudience = false,
+                    ClockSkew = TimeSpan.Zero
+                }, out var validatedToken);
+
+                var jwtToken = (JwtSecurityToken)validatedToken;
+                var userId = int.Parse(jwtToken.Claims.First(x => x.Type == ClaimTypes.NameIdentifier).Value);
+                return userId;
             }
             catch
             {
-                return false;
+                return null;
             }
-        }
-
-        private async Task CreateStudentProfileAsync(int userId, RegisterRequest request)
-        {
-            var student = new Student
-            {
-                MyUserId = userId,
-                StudentNumber = request.StudentNumber!,
-                EnrollmentDate = DateTime.UtcNow,
-                Major = request.Major
-            };
-
-            await _unitOfWork.Students.AddAsync(student);
-        }
-
-        private async Task CreateTeacherProfileAsync(int userId, RegisterRequest request)
-        {
-            var teacher = new Teacher
-            {
-                MyUserId = userId,
-                TeacherCode = request.TeacherCode!,
-                Department = request.Department!,
-                HireDate = DateTime.UtcNow
-            };
-
-            await _unitOfWork.Teachers.AddAsync(teacher);
-        }
+        } */
     }
 }

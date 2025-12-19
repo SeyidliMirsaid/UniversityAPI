@@ -4,12 +4,14 @@ namespace Education.Business.DTOs.Request.Auth
 {
     public class LoginRequest
     {
-        [Required]
-        [EmailAddress]
-        public string Email { get; set; } = string.Empty; // ↔ MyUser.Email
+        [Required(ErrorMessage = "Email tələb olunur")]
+        [EmailAddress(ErrorMessage = "Düzgün email formatı daxil edin")]
+        public string Email { get; set; } = string.Empty;
+        // Email: MyUser entity-də Email property ilə eşleşir
 
-        [Required]
-        [MinLength(6)]
-        public string Password { get; set; } = string.Empty; // ↔ MyUser.PasswordHash (hash ediləcək)
+        [Required(ErrorMessage = "Şifrə tələb olunur")]
+        [MinLength(6, ErrorMessage = "Şifrə ən azı 6 simvol olmalıdır")]
+        public string Password { get; set; } = string.Empty;
+        // Password: MyUser.PasswordHash ilə yoxlanacaq (hash edilmiş)
     }
 }

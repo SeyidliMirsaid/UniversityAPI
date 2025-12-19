@@ -5,26 +5,26 @@ namespace Education.Infrastructure.Persistence.Repositories.Interfaces
 {
     public interface IGenericRepository<TEntity> where TEntity : BaseEntity
     {
-        // READ 
+        // Read
         Task<TEntity?> GetByIdAsync(int id);
         Task<IEnumerable<TEntity>> GetAllAsync();
-        Task<IEnumerable<TEntity>> FindAsync(Expression<Func<TEntity, bool>> predicate);
         Task<TEntity?> FirstOrDefaultAsync(Expression<Func<TEntity, bool>> predicate);
+        Task<IEnumerable<TEntity>> FindAsync(Expression<Func<TEntity, bool>> predicate);
 
-        // CREATE Operations  
+        // Create
         Task AddAsync(TEntity entity);
         Task AddRangeAsync(IEnumerable<TEntity> entities);
 
-        // UPDATE Operations
+        // Update
         void Update(TEntity entity);
         void UpdateRange(IEnumerable<TEntity> entities);
 
-        // DELETE Operations
-        Task DeleteAsync(int id); // Soft delete
-        void Remove(TEntity entity);    // Hard delete
+        // Delete
+        Task SoftDeleteAsync(int id);
+        void Remove(TEntity entity);
         void RemoveRange(IEnumerable<TEntity> entities);
 
-        // CHECK Operations
+        // Check
         Task<bool> ExistsAsync(int id);
         Task<bool> ExistsAsync(Expression<Func<TEntity, bool>> predicate);
         Task<int> CountAsync();

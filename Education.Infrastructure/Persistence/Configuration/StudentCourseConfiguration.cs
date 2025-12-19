@@ -10,42 +10,34 @@ namespace Education.Infrastructure.Persistence.Configuration
         {
             builder.ToTable("StudentCourses");
 
-            // Composite Primary Key (StudentId + CourseId)
+            // Composite primary key
             builder.HasKey(sc => new { sc.StudentId, sc.CourseId });
 
-            // Properties
             builder.Property(sc => sc.EnrollmentDate)
                 .IsRequired();
 
             builder.Property(sc => sc.Grade)
-                .HasPrecision(5, 2); // 100.00 kimi
+                .HasPrecision(5, 2);
 
             builder.Property(sc => sc.GradeLetter)
-                .HasMaxLength(2); // A, B+, C-
+                .HasMaxLength(2);
 
             builder.Property(sc => sc.Status)
                 .IsRequired()
                 .HasMaxLength(20)
                 .HasDefaultValue("Enrolled");
 
-            // Foreign Keys ve Relationships
-
-            // Student tərəfi - Cascade: Student silinərsə StudentCourse də silinsin
+            // Foreign key to Student
             builder.HasOne(sc => sc.Student)
                 .WithMany(s => s.StudentCourses)
                 .HasForeignKey(sc => sc.StudentId)
                 .OnDelete(DeleteBehavior.Cascade);
 
-            // Course tərəfi - Cascade: Course silinərsə StudentCourse də silinsin  
+            // Foreign key to Course
             builder.HasOne(sc => sc.Course)
                 .WithMany(c => c.StudentCourses)
                 .HasForeignKey(sc => sc.CourseId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            // Indexes for performance
-            builder.HasIndex(sc => sc.Status);
-            builder.HasIndex(sc => sc.Grade);
-            builder.HasIndex(sc => sc.EnrollmentDate);
         }
     }
 }

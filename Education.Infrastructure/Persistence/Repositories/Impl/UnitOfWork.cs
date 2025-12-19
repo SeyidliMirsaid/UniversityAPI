@@ -9,7 +9,6 @@ namespace Education.Infrastructure.Persistence.Repositories.Impl
     public class UnitOfWork : IUnitOfWork
     {
         private readonly UniversityDbContext _database;
-        private IDbContextTransaction? _transaction;
 
         private readonly IGenericRepository<MyUser> _myUsers;
         private readonly IGenericRepository<Student> _students;
@@ -43,88 +42,15 @@ namespace Education.Infrastructure.Persistence.Repositories.Impl
         public IGenericRepository<Token> Tokens => _tokens;
         public IGenericRepository<StudentDiscipline> StudentDisciplines => _studentDisciplines;
 
-        // ========== ƏSAS ƏMƏLİYYATLAR ==========
-
-
-        /// Bütün dəyişiklikləri save edir
         public async Task<int> SaveChangesAsync()
         {
             return await _database.SaveChangesAsync();
         }
 
-        /// Transaction başladır
-        public async Task BeginTransactionAsync()
-        {
-            _transaction = await _database.Database.BeginTransactionAsync();
-        }
-
-        /// Transaction commit edir (save edir)
-        public async Task CommitTransactionAsync()
-        {
-            if (_transaction == null)
-            {
-                throw new InvalidOperationException("Transaction başlanmayıb!");
-            }
-
-            try
-            {
-                // 1. Save changes
-                await _database.SaveChangesAsync();
-
-                // 2. Commit et
-                await _transaction.CommitAsync();
-            }
-            finally
-            {
-                // 3. Transaction-i təmizlə
-                await _transaction.DisposeAsync();
-                _transaction = null;
-            }
-        }
-
-        public async Task RollbackTransactionAsync()
-        {
-            if (_transaction == null)
-            {
-                throw new InvalidOperationException("Transaction başlanmayıb!");
-            }
-
-            try
-            {
-                // 1. Rollback et
-                await _transaction.RollbackAsync();
-            }
-            finally
-            {
-                // 2. Transaction-i təmizlə
-                await _transaction.DisposeAsync();
-                _transaction = null;
-            }
-        }
-
-        // ========== DISPOSE ==========
-
-        private bool _disposed = false;
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (!_disposed && disposing)
-            {
-                _database.Dispose();
-                _transaction?.Dispose();
-            }
-            _disposed = true;
-        }
-
         public void Dispose()
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        ~UnitOfWork()
-        {
-            Dispose(false);
+            _database.Dispose();
+             GC.SuppressFinalize(this);
         }
     }
 }

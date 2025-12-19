@@ -5,6 +5,7 @@ namespace Education.Domain.Entities
 {
     public class Course : BaseEntity
     {
+        // Əsas məlumatlar
         public string CourseCode { get; set; } = string.Empty;
         public string CourseName { get; set; } = string.Empty;
         public string Description { get; set; } = string.Empty;
@@ -20,11 +21,11 @@ namespace Education.Domain.Entities
         // Navigation Properties
         [JsonIgnore]
         public virtual Teacher Teacher { get; set; } = null!;
-
         [JsonIgnore]
         public virtual ICollection<StudentCourse> StudentCourses { get; set; } = [];
 
-        // Computed Properties
+
+        // ✅ Sadə computed properties
         [NotMapped]
         public int EnrolledStudentsCount => StudentCourses?.Count(sc => sc.Status == "Enrolled") ?? 0;
 
@@ -36,11 +37,5 @@ namespace Education.Domain.Entities
 
         [NotMapped]
         public string TeacherName => Teacher?.FullName ?? string.Empty;
-
-        [NotMapped]
-        public decimal? AverageGrade =>
-            StudentCourses?
-                .Where(sc => sc.Grade.HasValue)
-                .Average(sc => sc.Grade) ?? null;
     }
 }

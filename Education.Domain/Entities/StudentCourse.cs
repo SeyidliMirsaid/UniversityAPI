@@ -4,8 +4,11 @@ namespace Education.Domain.Entities
 {
     public class StudentCourse : BaseEntity
     {
+        // Foreign Keys
         public int StudentId { get; set; }
         public int CourseId { get; set; }
+
+        // Akademik məlumatlar
         public DateTime EnrollmentDate { get; set; } = DateTime.UtcNow;
         public decimal? Grade { get; set; }
         public string? GradeLetter { get; set; }
@@ -15,7 +18,7 @@ namespace Education.Domain.Entities
         public virtual Student Student { get; set; } = null!;
         public virtual Course Course { get; set; } = null!;
 
-        // Computed Properties
+        // ✅ Sadə computed properties
         [NotMapped]
         public bool IsPassed => Grade >= 50;
 

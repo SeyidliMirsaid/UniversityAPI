@@ -32,11 +32,10 @@ namespace Education.Infrastructure.Persistence.Data
             modelBuilder.Entity<StudentDiscipline>().HasQueryFilter(e => !e.IsDeleted);
 
 
-            modelBuilder.ApplyConfigurationsFromAssembly(
-                typeof(UniversityDbContext).Assembly);
+            modelBuilder.ApplyConfigurationsFromAssembly(typeof(UniversityDbContext).Assembly);
 
-            // Manual apply (əgər auto işləmirsə)
-            /*
+             
+            /* Manual apply (əgər auto işləmirsə)
             modelBuilder.ApplyConfiguration(new MyUserConfiguration());
             modelBuilder.ApplyConfiguration(new StudentConfiguration());
             modelBuilder.ApplyConfiguration(new TeacherConfiguration());
@@ -48,6 +47,6 @@ namespace Education.Infrastructure.Persistence.Data
             modelBuilder.ApplyConfiguration(new StudentDisciplineConfiguration());
             */
         }
-      
+
     }
 }

@@ -19,30 +19,19 @@ namespace Education.Infrastructure.Persistence.Configuration
             builder.Property(d => d.StartDate)
                 .IsRequired();
 
-            builder.Property(d => d.EndDate);
-
             builder.Property(d => d.Reason)
                 .IsRequired()
                 .HasMaxLength(500);
-
-            builder.Property(d => d.Description)
-                .HasMaxLength(1000);
 
             builder.Property(d => d.IssuedBy)
                 .IsRequired()
                 .HasMaxLength(100);
 
-            // Foreign Key - Disciplines artıq var
+            // Foreign key to Student
             builder.HasOne(d => d.Student)
                 .WithMany(s => s.Disciplines)
                 .HasForeignKey(d => d.StudentId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            // Indexes
-            builder.HasIndex(d => d.StudentId);
-            builder.HasIndex(d => d.Penalty);
-            builder.HasIndex(d => d.StartDate);
-            builder.HasIndex(d => d.EndDate);
         }
     }
 }

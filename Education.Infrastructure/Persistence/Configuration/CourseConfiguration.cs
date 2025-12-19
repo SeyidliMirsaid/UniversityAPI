@@ -29,28 +29,17 @@ namespace Education.Infrastructure.Persistence.Configuration
             builder.Property(c => c.Credits)
                 .IsRequired();
 
-            builder.Property(c => c.Semester);
-
-            builder.Property(c => c.IsActive)
-                .HasDefaultValue(true);
-
             builder.Property(c => c.MaxStudents)
                 .HasDefaultValue(30);
 
             builder.Property(c => c.MinStudents)
                 .HasDefaultValue(5);
 
-            // Foreign Key - Restrict: Course silinərsə Teacher QALSIN
+            // Foreign key to Teacher
             builder.HasOne(c => c.Teacher)
                 .WithMany(t => t.Courses)
                 .HasForeignKey(c => c.TeacherId)
                 .OnDelete(DeleteBehavior.Restrict);
-
-            // Relationships - Cascade: Course silinərsə StudentCourses DƏ silinsin
-            builder.HasMany(c => c.StudentCourses)
-                .WithOne(sc => sc.Course)
-                .HasForeignKey(sc => sc.CourseId)
-                .OnDelete(DeleteBehavior.Cascade);
         }
     }
 }

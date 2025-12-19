@@ -5,11 +5,10 @@ namespace Education.Domain.Entities
 {
     public class Teacher : BaseEntity
     {
-        // TEACHER INFO
+        // Teacher məlumatları
         public string TeacherCode { get; set; } = string.Empty;
         public string Department { get; set; } = string.Empty;
         public DateTime HireDate { get; set; } = DateTime.UtcNow;
-
         // ACADEMIC INFO
         public string? AcademicTitle { get; set; } // Professor, Associate Professor, Lecturer
         public string? Specialization { get; set; }
@@ -23,7 +22,6 @@ namespace Education.Domain.Entities
 
         // NAVIGATION PROPERTIES
         public virtual MyUser? MyUser { get; set; }
-
         [JsonIgnore]
         public virtual ICollection<Course> Courses { get; set; } = [];
 
@@ -43,21 +41,5 @@ namespace Education.Domain.Entities
             DateTime.Now.Year - HireDate.Year -
             (DateTime.Now.DayOfYear < HireDate.DayOfYear ? 1 : 0);
 
-        [NotMapped]
-        public int ActiveCoursesCount => Courses?.Count(c => c.IsActive) ?? 0;
-
-        [NotMapped]
-        public bool CanTeachMoreCourses => ActiveCoursesCount < 5; // Max 5 kurs
-
-        [NotMapped]
-        public string Status
-        {
-            get
-            {
-                if (ActiveCoursesCount > 0) return "Active";
-                if (DateTime.Now.Year - HireDate.Year >= 30) return "Retired";
-                return "Available";
-            }
-        }
     }
 }

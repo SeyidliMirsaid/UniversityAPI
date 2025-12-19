@@ -21,12 +21,6 @@ namespace Education.Infrastructure.Persistence.Configuration
 
             builder.Property(r => r.Description)
                 .HasMaxLength(200);
-
-            // Relationships
-            builder.HasMany(r => r.MyUserRoles)
-                .WithOne(ur => ur.MyRole)
-                .HasForeignKey(ur => ur.MyRoleId)
-                .OnDelete(DeleteBehavior.Restrict); // Role silinərsə UserRoles QALSIN
         }
     }
 }

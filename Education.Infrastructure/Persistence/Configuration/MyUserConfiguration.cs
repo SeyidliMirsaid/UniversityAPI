@@ -8,13 +8,10 @@ namespace Education.Infrastructure.Persistence.Configuration
     {
         public void Configure(EntityTypeBuilder<MyUser> builder)
         {
-            // Table name
             builder.ToTable("MyUsers");
 
-            // Primary Key
             builder.HasKey(u => u.Id);
 
-            // Properties
             builder.Property(u => u.FirstName)
                 .IsRequired()
                 .HasMaxLength(50);
@@ -31,27 +28,22 @@ namespace Education.Infrastructure.Persistence.Configuration
                 .IsUnique();
 
             builder.Property(u => u.PhoneNumber)
+                .IsRequired()
                 .HasMaxLength(20);
 
-            builder.HasIndex(u => u.PhoneNumber)
-                .IsUnique();
+            builder.Property(u => u.PasswordHash)
+                .IsRequired();
 
-            // Relationships
-            builder.HasOne(u => u.Student)
-                .WithOne(s => s.MyUser)
-                .HasForeignKey<Student>(s => s.MyUserId);
+            builder.Property(u => u.PasswordSalt)
+                .IsRequired();
 
-            builder.HasOne(u => u.Teacher)
-                .WithOne(t => t.MyUser)
-                .HasForeignKey<Teacher>(t => t.MyUserId);
+            builder.Property(u => u.RefreshToken);
 
-            builder.HasMany(u => u.MyUserRoles)
-                .WithOne(ur => ur.MyUser)
-                .HasForeignKey(ur => ur.MyUserId);
+            builder.Property(u => u.EmailConfirmed)
+                .HasDefaultValue(false);
 
-            builder.HasMany(u => u.Tokens)
-                .WithOne(t => t.MyUser)
-                .HasForeignKey(t => t.MyUserId);
+            builder.Property(u => u.PhoneConfirmed)
+                .HasDefaultValue(false);
         }
     }
 }

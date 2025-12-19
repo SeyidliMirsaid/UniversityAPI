@@ -8,103 +8,71 @@ namespace Education.API
     {
         public static IServiceCollection InjectApiLayer(this IServiceCollection services,IConfiguration configuration)
         {
-            // ==================== 5. JWT AUTHENTICATION CONFIGURATION ====================
-            // Niyə? - Token-based authentication aktiv etmək
-            // Hansı protocol? - JWT Bearer Token Authentication
+            var jwtSettings = configuration.GetSection("Jwt");
+
+            // SecretKey yoxlanışı
+            var secretKey = jwtSettings["SecretKey"];
+            if (string.IsNullOrEmpty(secretKey))
+            {
+                throw new ArgumentNullException("Jwt:SecretKey", "JWT Secret Key təyin edilməyib");
+            }
+
+            // Minimum 32 simvol yoxlanışı
+            if (secretKey.Length < 32)
+            {
+                throw new ArgumentException("JWT Secret Key ən azı 32 simvol olmalıdır");
+            }
+
+            // Authentication service'ini əlavə et
             services.AddAuthentication(options =>
             {
-                // Niyə iki option? - Default scheme-ləri təyin edirik
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-                options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
             })
             .AddJwtBearer(options =>
             {
-                // ======= Token Validation Parameters =======
-                // Niyə? - Gələn JWT token-lərinin validasiya qaydalarını təyin edirik
-
+                // Token validation parametrləri
                 options.TokenValidationParameters = new TokenValidationParameters
                 {
-                    // ====== 1. VALIDATE ISSUER ======
-                    // Niyə? - Token-in kim tərəfindən yaradıldığını yoxlamaq
-                    // Hansı təhlükə? - Saxta token (fake issuer)
-                    ValidateIssuer = true,
-                    ValidIssuer = configuration["JwtSettings:Issuer"],
-                    // Niyə appsettings-dən? - Configuration mərkəzləşdirilməsi üçün
+                    ValidateIssuer = true,                    // Issuer yoxlanılır
+                    ValidateAudience = true,                  // Audience yoxlanılır
+                    ValidateLifetime = true,                  // Müddət yoxlanılır
+                    ValidateIssuerSigningKey = true,          // İmza key'i yoxlanılır
 
-                    // ====== 2. VALIDATE AUDIENCE ======
-                    // Niyə? - Token-in hansı app üçün olduğunu yoxlamaq
-                    ValidateAudience = true,
-                    ValidAudience = configuration["JwtSettings:Audience"],
-
-                    // ====== 3. VALIDATE LIFETIME ======
-                    // Niyə? - Token-in vaxtının keçib-keçmədiyini yoxlamaq
-                    ValidateLifetime = true,
-
-                    // ====== 4. VALIDATE SIGNING KEY ======
-                    // Niyə? - Token-in signature-nın düzgünlüyünü yoxlamaq
-                    // ƏN ƏHƏMİYYƏTLİ HİSSƏ - Security
-                    ValidateIssuerSigningKey = true,
-
-                    // ====== 5. SIGNING KEY ======
-                    // Niyə? - Token-in şifrələnməsi üçün gizli açar
-                    // Niyə SymmetricSecurityKey? - Eyni açar ilə sign və verify
+                    ValidIssuer = jwtSettings["Issuer"],      // Etibarlı issuer
+                    ValidAudience = jwtSettings["Audience"],  // Etibarlı audience
                     IssuerSigningKey = new SymmetricSecurityKey(
-                        Encoding.UTF8.GetBytes(configuration["JwtSettings:SecretKey"]!)),
+                        Encoding.UTF8.GetBytes(secretKey)),   // İmza key'i
 
-                    // ====== 6. CLOCK SKEW ======
-                    // Niyə? - Server və client saat fərqləri üçün tolerantlıq
-                    ClockSkew = TimeSpan.FromMinutes(5)
+                    ClockSkew = TimeSpan.Zero                 // Dəqiq müddət yoxlaması
                 };
 
-                // ======= EVENTS CONFIGURATION =======
-                // Niyə? - Authentication prosesində baş verən event-ləri handle etmək
+                // Token'i header'dan alma
                 options.Events = new JwtBearerEvents
                 {
-                    // ====== 1. OnAuthenticationFailed ======
-                    // Niyə? - Authentication uğursuz olduqda loglamaq və ya xüsusi cavab vermək
-                    OnAuthenticationFailed = context =>
+                    // Token'i Authorization header'dan oxu
+                    OnMessageReceived = context =>
                     {
-                        // Niyə Console? - Development zamanı debugging üçün
-                        Console.WriteLine($"Authentication failed: {context.Exception.Message}");
+                        var token = context.Request.Headers.Authorization.FirstOrDefault()?.Split(" ").Last();
+
+                        if (!string.IsNullOrEmpty(token))
+                        {
+                            context.Token = token;
+                        }
+
                         return Task.CompletedTask;
                     },
 
-                    // ====== 2. OnTokenValidated ======
-                    // Niyə? - Token validasiya edildikdən sonra əlavə yoxlamalar
-                    OnTokenValidated = context =>
+                    // Authentication xətası
+                    OnAuthenticationFailed = context =>
                     {
-                        // Əlavə logic: User-in aktiv olub-olmadığını yoxlamaq
-                        // Database-dən user statusunu yoxlamaq
+                        if (context.Exception.GetType() == typeof(SecurityTokenExpiredException))
+                        {
+                            context.Response.Headers.Append("Token-Expired", "true");
+                        }
                         return Task.CompletedTask;
                     }
                 };
-            });
-
-            // ==================== 6. AUTHORIZATION POLICIES ====================
-            // Niyə? - Role-based authorization üçün policy-lər təyin etmək
-            // Hansı məqsəd? - Fərqli rollar üçün fərqli icazələr
-            services.AddAuthorization(options =>
-            {
-                // ====== 1. ADMIN POLICY ======
-                // Niyə? - Yalnız Admin rollu user-lər üçün
-                options.AddPolicy("AdminOnly", policy =>
-                    policy.RequireRole("Admin"));
-
-                // ====== 2. TEACHER POLICY ======
-                // Niyə? - Teacher və Admin üçün
-                options.AddPolicy("TeacherOrAdmin", policy =>
-                    policy.RequireRole("Teacher", "Admin"));
-
-                // ====== 3. STUDENT POLICY ======
-                // Niyə? - Student, Teacher və Admin üçün
-                options.AddPolicy("StudentOrAbove", policy =>
-                    policy.RequireRole("Student", "Teacher", "Admin"));
-
-                // ====== 4. EMAIL CONFIRMED POLICY ======
-                // Niyə? - Yalnız emaili təsdiqlənmiş user-lər üçün
-                options.AddPolicy("EmailConfirmed", policy =>
-                    policy.RequireClaim("email_confirmed", "true"));
             });
             return services;
         }

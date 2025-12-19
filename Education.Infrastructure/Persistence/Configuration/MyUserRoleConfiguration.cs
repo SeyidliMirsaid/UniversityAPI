@@ -10,23 +10,20 @@ namespace Education.Infrastructure.Persistence.Configuration
         {
             builder.ToTable("MyUserRoles");
 
-            // Composite Primary Key
+            // Composite primary key
             builder.HasKey(ur => new { ur.MyUserId, ur.MyRoleId });
 
-            // Foreign Keys
+            // Foreign key to MyUser
             builder.HasOne(ur => ur.MyUser)
                 .WithMany(u => u.MyUserRoles)
                 .HasForeignKey(ur => ur.MyUserId)
-                .OnDelete(DeleteBehavior.Cascade); // User silinərsə UserRoles DƏ silinsin
+                .OnDelete(DeleteBehavior.Cascade);
 
+            // Foreign key to MyRole
             builder.HasOne(ur => ur.MyRole)
                 .WithMany(r => r.MyUserRoles)
                 .HasForeignKey(ur => ur.MyRoleId)
-                .OnDelete(DeleteBehavior.Cascade); // Role silinərsə UserRoles DƏ silinsin
-
-            // Index
-            builder.HasIndex(ur => ur.MyUserId);
-            builder.HasIndex(ur => ur.MyRoleId);
+                .OnDelete(DeleteBehavior.Cascade);
         }
     }
 }

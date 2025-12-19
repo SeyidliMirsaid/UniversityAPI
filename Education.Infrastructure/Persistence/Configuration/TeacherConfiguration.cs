@@ -29,29 +29,11 @@ namespace Education.Infrastructure.Persistence.Configuration
             builder.Property(t => t.AcademicTitle)
                 .HasMaxLength(50);
 
-            builder.Property(t => t.Specialization)
-                .HasMaxLength(150);
-
-            builder.Property(t => t.OfficeLocation)
-                .HasMaxLength(100);
-
-            builder.Property(t => t.OfficeHours)
-                .HasMaxLength(500);
-
-            builder.Property(t => t.ResearchInterests)
-                .HasMaxLength(500);
-
-            // Foreign Key - Cascade: MyUser silinərsə Teacher DƏ silinsin
+            // One-to-one with MyUser
             builder.HasOne(t => t.MyUser)
                 .WithOne(u => u.Teacher)
                 .HasForeignKey<Teacher>(t => t.MyUserId)
                 .OnDelete(DeleteBehavior.Cascade);
-
-            // Relationships - Restrict: Teacher silinərsə Courses QALSIN
-            builder.HasMany(t => t.Courses)
-                .WithOne(c => c.Teacher)
-                .HasForeignKey(c => c.TeacherId)
-                .OnDelete(DeleteBehavior.Restrict);
         }
     }
 }

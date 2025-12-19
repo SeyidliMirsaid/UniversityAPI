@@ -13,15 +13,10 @@ namespace Education.Infrastructure.Persistence.Configuration
             builder.HasKey(t => t.Id);
 
             builder.Property(t => t.TokenValue)
-                .IsRequired()
-                .HasMaxLength(500);
-
-            builder.HasIndex(t => t.TokenValue) //  Eyni token 2 dəfə ola bilməz
-                .IsUnique(); 
+                .IsRequired();
 
             builder.Property(t => t.JwtId)
-                .IsRequired()
-                .HasMaxLength(100);
+                .IsRequired();
 
             builder.Property(t => t.IsUsed)
                 .HasDefaultValue(false);
@@ -36,19 +31,15 @@ namespace Education.Infrastructure.Persistence.Configuration
                 .IsRequired();
 
             builder.Property(t => t.TokenType)
+                .IsRequired()
                 .HasMaxLength(50)
                 .HasDefaultValue("Refresh");
 
-            // Foreign Key
+            // Foreign key to MyUser
             builder.HasOne(t => t.MyUser)
                 .WithMany(u => u.Tokens)
                 .HasForeignKey(t => t.MyUserId)
-                .OnDelete(DeleteBehavior.Cascade); // User silinərsə Token-lar DƏ silinsin
-
-            // Indexes for performance  -- Sürətli axtarış üçün
-            builder.HasIndex(t => t.MyUserId);
-            builder.HasIndex(t => t.ExpiryDate);
-            builder.HasIndex(t => new { t.IsUsed, t.IsRevoked });
+                .OnDelete(DeleteBehavior.Cascade);
         }
     }
 }
