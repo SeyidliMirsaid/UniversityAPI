@@ -59,6 +59,5 @@ namespace Education.Domain.Entities
                 return "Available";
             }
         }
-
     }
 }

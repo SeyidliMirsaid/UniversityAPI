@@ -46,7 +46,6 @@ namespace Education.Infrastructure.Persistence.Configuration
             builder.HasIndex(sc => sc.Status);
             builder.HasIndex(sc => sc.Grade);
             builder.HasIndex(sc => sc.EnrollmentDate);
-
         }
     }
 }
