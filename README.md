@@ -16,3 +16,8 @@ ASP.NET Core 8 API for university management system with JWT authentication.
 1. Infrastructure Layer (DbContext, Configurations)
 2. Application Layer (Services, DTOs)
 3. API Layer (Controllers, Middleware)# Education
+
+
+## Current Version: v2.0 - Infrastructure Layer
+✅ Entities Configurations were created.
+✅ Migrations was created.
