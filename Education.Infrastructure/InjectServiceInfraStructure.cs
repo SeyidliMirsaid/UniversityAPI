@@ -1,7 +1,10 @@
 ﻿using Education.Infrastructure.Persistence.Data;
+using Education.Infrastructure.Persistence.Repositories.Impl;
+using Education.Infrastructure.Persistence.Repositories.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using static System.Formats.Asn1.AsnWriter;
 
 namespace Education.Infrastructure
 {
@@ -15,6 +18,10 @@ namespace Education.Infrastructure
             {
                 options.UseSqlServer(configuration.GetConnectionString("DbConnect"));
             });
+
+            services.AddScoped(typeof(IGenericRepository<>), typeof(GenericRepository<>));
+            services.AddScoped<IUnitOfWork, UnitOfWork>();
+
             return services;
         }
     }
